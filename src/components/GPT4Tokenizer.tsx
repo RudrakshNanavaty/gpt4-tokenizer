@@ -23,7 +23,6 @@ import { CheckCircle, Laptop, Loader2, Moon, Sun, XCircle } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
 
-
 export default function GPT4TokenizerDemo() {
 	const { theme, setTheme } = useTheme();
 	const [systemText, setSystemText] = useState<string>(
