@@ -20,7 +20,7 @@ interface TokenizerData {
 	specialTokens: Record<string, number>;
 }
 
-export default function GPT4TokenizerDemo() {
+export default function GPT4Tokenizer() {
 	const [tokenizer, setTokenizer] = useState<TokenizerData | null>(null);
 	const [systemText, setSystemText] = useState('You are a helpful assistant');
 	const [userText, setUserText] = useState('');
@@ -101,7 +101,7 @@ export default function GPT4TokenizerDemo() {
 		if (!tokenizer) return [];
 
 		// Handle special tokens first
-		let processedText = text;
+		const processedText = text;
 		const specialTokenMatches: Array<{
 			token: string;
 			id: number;
@@ -285,7 +285,7 @@ export default function GPT4TokenizerDemo() {
 		}, 500); // 300ms debounce delay
 
 		return () => clearTimeout(debounceTimeout);
-	}, [systemText, userText, tokenizer]);
+	}, [systemText, userText, tokenizer, encode]);
 
 	if (loading) {
 		return (

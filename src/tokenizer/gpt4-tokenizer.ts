@@ -2,13 +2,13 @@ import * as fs from 'fs';
 import * as readline from 'readline';
 
 export class GPT4Tokenizer {
-  vocab: Map<string, number> = new Map();
-  merges: Map<string, number> = new Map();
+  private vocab: Map<string, number> = new Map();
+  private merges: Map<string, number> = new Map();
   private specialTokens: Map<string, number> = new Map();
   nextTokenId: number = 256;
 
   // GPT-4 regex pattern for pre-tokenization
-  readonly gpt4Pattern = /'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu;
+  private readonly gpt4Pattern = /'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu;
 
   constructor() {
     // Initialize byte-level vocabulary (0-255)
@@ -296,7 +296,7 @@ private async performBPEMerging(vocab: Map<string, number>, vocabSize: number): 
 
   encode(text: string): number[] {
     // Handle special tokens first
-    let processedText = text;
+    const processedText = text;
     const specialTokens: number[] = [];
 
     // Check for special tokens

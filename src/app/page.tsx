@@ -1,8 +1,7 @@
-import GPT4TokenizerDemo from '@/components/GPT4TokenizerDemo';
-import Image from "next/image";
+import GPT4Tokenizer from '@/components/GPT4Tokenizer';
 
 export default function Home() {
   return (
-    <GPT4TokenizerDemo />
+    <GPT4Tokenizer />
   );
 }
