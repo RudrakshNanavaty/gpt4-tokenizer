@@ -1,6 +1,14 @@
 'use client';
 
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import {
+	Card,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle
+} from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import {
 	Select,
@@ -10,423 +18,478 @@ import {
 	SelectValue
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Monitor, Moon, Sun } from 'lucide-react';
+import { GPT4Tokenizer, TokenizerData } from '@/tokenizer/gpt4-tokenizer';
+import { CheckCircle, Laptop, Loader2, Moon, Sun, XCircle } from 'lucide-react';
 import { useTheme } from 'next-themes';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
-interface TokenizerData {
-	vocab: Record<string, number>;
-	merges: Record<string, number>;
-	specialTokens: Record<string, number>;
-}
 
-export default function GPT4Tokenizer() {
-	const [tokenizer, setTokenizer] = useState<TokenizerData | null>(null);
-	const [systemText, setSystemText] = useState('You are a helpful assistant');
-	const [userText, setUserText] = useState('');
-	const [tokens, setTokens] = useState<number[]>([]);
-	const [loading, setLoading] = useState(true);
+export default function GPT4TokenizerDemo() {
 	const { theme, setTheme } = useTheme();
-
-	// GPT-4 regex pattern for pre-tokenization
-	const gpt4Pattern =
-		/'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu;
+	const [systemText, setSystemText] = useState<string>(
+		'You are a helpful AI assistant. Please provide accurate and helpful responses to user questions.'
+	);
+	const [userText, setUserText] = useState<string>(
+		'What is the capital of France and what makes it culturally significant?'
+	);
+	const [tokens, setTokens] = useState<string[]>([]);
+	const [tokenIds, setTokenIds] = useState<number[]>([]);
+	const [decodedText, setDecodedText] = useState('');
+	const [isVerified, setIsVerified] = useState(false);
+	const [tokenizer, setTokenizer] = useState<GPT4Tokenizer | null>(null);
+	const [loading, setLoading] = useState(true);
+	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
+		let isMounted = true;
 		async function loadTokenizer() {
 			try {
 				const [vocabResponse, mergesResponse] = await Promise.all([
 					fetch('/tokenizer/vocab.json'),
-					fetch('/tokenizer/merges.txt') // Note: .txt extension from Hugging Face
+					fetch('/tokenizer/merges.txt')
 				]);
+
+				if (!vocabResponse.ok || !mergesResponse.ok) {
+					throw new Error('Failed to load tokenizer files');
+				}
 
 				const vocab = await vocabResponse.json();
 				const mergesText = await mergesResponse.text();
 
-				// Convert merges text to expected JSON format
-				const merges: Record<string, number> = {};
-				const lines = mergesText
+				const merges = mergesText
 					.split('\n')
-					.filter(line => line.trim() && !line.startsWith('#'));
+					.filter(line => line.trim() && !line.startsWith('#version'))
+					.slice(1);
 
-				lines.forEach((line, index) => {
-					const parts = line.trim().split(' ');
-					if (parts.length === 2) {
-						const [first, second] = parts;
-						// For GPT-4, we need to handle the special character encoding
-						const firstBytes = Array.from(
-							new TextEncoder().encode(first)
-						);
-						const secondBytes = Array.from(
-							new TextEncoder().encode(second)
-						);
+				const tokenizerData: TokenizerData = { vocab, merges };
+				const newTokenizer = new GPT4Tokenizer(tokenizerData);
 
-						if (
-							firstBytes.length === 1 &&
-							secondBytes.length === 1
-						) {
-							merges[`${firstBytes[0]},${secondBytes[0]}`] =
-								256 + index;
-						} else {
-							// Handle multi-byte characters or special tokens
-							const key = `${first}_${second}`;
-							merges[key] = 256 + index;
-						}
-					}
-				});
-
-				// Define special tokens for GPT-4 format
-				const specialTokens: Record<string, number> = {
-					'<|endoftext|>': 100257,
-					'<|fim_prefix|>': 100258,
-					'<|fim_middle|>': 100259,
-					'<|fim_suffix|>': 100260,
-					'<|im_start|>': 100264,
-					'<|im_end|>': 100265,
-					'<|im_sep|>': 100266
-				};
-
-				setTokenizer({ vocab, merges, specialTokens });
-				setLoading(false);
-			} catch (error) {
-				console.error('Failed to load tokenizer:', error);
-				setLoading(false);
+				if (isMounted) {
+					setTokenizer(newTokenizer);
+					setLoading(false);
+				}
+			} catch (err) {
+				if (isMounted) {
+					setError(
+						err instanceof Error ? err.message : 'Unknown error'
+					);
+					setLoading(false);
+				}
 			}
 		}
 
 		loadTokenizer();
+		return () => {
+			isMounted = false;
+		};
 	}, []);
 
-	const encode = useCallback(
-		(text: string): number[] => {
-			if (!tokenizer) return [];
-
-			// Handle special tokens first
-			const processedText = text;
-			const specialTokenMatches: Array<{
-				token: string;
-				id: number;
-				start: number;
-				end: number;
-			}> = [];
-
-			// Find all special tokens in the text
-			for (const [specialToken, tokenId] of Object.entries(
-				tokenizer.specialTokens
-			)) {
-				let startIndex = 0;
-				while (true) {
-					const index = processedText.indexOf(
-						specialToken,
-						startIndex
-					);
-					if (index === -1) break;
-
-					specialTokenMatches.push({
-						token: specialToken,
-						id: tokenId,
-						start: index,
-						end: index + specialToken.length
-					});
-					startIndex = index + specialToken.length;
-				}
-			}
-
-			// Sort special token matches by position
-			specialTokenMatches.sort((a, b) => a.start - b.start);
-
-			// Process text with special tokens
-			const allTokens: number[] = [];
-			let currentPos = 0;
-
-			for (const match of specialTokenMatches) {
-				// Process text before special token
-				if (currentPos < match.start) {
-					const beforeText = processedText.slice(
-						currentPos,
-						match.start
-					);
-					const beforeTokens = encodeRegularText(beforeText);
-					allTokens.push(...beforeTokens);
-				}
-
-				// Add special token
-				allTokens.push(match.id);
-				currentPos = match.end;
-			}
-
-			// Process remaining text
-			if (currentPos < processedText.length) {
-				const remainingText = processedText.slice(currentPos);
-				const remainingTokens = encodeRegularText(remainingText);
-				allTokens.push(...remainingTokens);
-			}
-
-			return allTokens;
-		},
-		[tokenizer]
-	);
-
-	const encodeRegularText = (text: string): number[] => {
-		if (!tokenizer || !text) return [];
-
-		// Pre-tokenize using GPT-4 regex
-		const chunks = Array.from(text.matchAll(gpt4Pattern), m => m[0]);
-		const allTokens: number[] = [];
-
-		for (const chunk of chunks) {
-			// Convert to bytes and apply BPE
-			let tokens = Array.from(new TextEncoder().encode(chunk));
-
-			// Apply learned merges in order
-			const sortedMerges = Object.entries(tokenizer.merges).sort(
-				(a, b) => a[1] - b[1]
-			);
-
-			for (const [pairKey, newToken] of sortedMerges) {
-				if (pairKey.includes(',')) {
-					const [first, second] = pairKey.split(',').map(Number);
-					tokens = applyMerge(tokens, first, second, newToken);
-				}
-			}
-
-			allTokens.push(...tokens);
-		}
-
-		return allTokens;
-	};
-
-	const applyMerge = (
-		tokens: number[],
-		first: number,
-		second: number,
-		newToken: number
-	): number[] => {
-		const result: number[] = [];
-		let i = 0;
-
-		while (i < tokens.length) {
-			if (
-				i < tokens.length - 1 &&
-				tokens[i] === first &&
-				tokens[i + 1] === second
-			) {
-				result.push(newToken);
-				i += 2;
-			} else {
-				result.push(tokens[i]);
-				i += 1;
-			}
-		}
-
-		return result;
-	};
-
-	const getTokenColor = (index: number) => {
-		const colors = [
-			'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-			'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-			'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
-			'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
-			'bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200',
-			'bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200'
-		];
-		return colors[index % colors.length];
-	};
-
-	const renderColoredTokens = () => {
-		const fullText = `<|im_start|>system<|im_sep|>${systemText}<|im_end|><|im_start|>user<|im_sep|>${userText}<|im_end|><|im_start|>assistant<|im_sep|>`;
-
-		// Split by special tokens first to show them distinctly
-		let displayText = fullText;
-		const parts: Array<{ text: string; isSpecial: boolean }> = [];
-
-		// Find special tokens
-		for (const specialToken of Object.keys(
-			tokenizer?.specialTokens || {}
-		)) {
-			displayText = displayText.replace(
-				new RegExp(
-					specialToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
-					'g'
-				),
-				`|||${specialToken}|||`
-			);
-		}
-
-		const segments = displayText.split('|||');
-		segments.forEach(segment => {
-			if (segment && tokenizer?.specialTokens[segment]) {
-				parts.push({ text: segment, isSpecial: true });
-			} else if (segment) {
-				// Further split regular text by regex
-				const chunks = Array.from(
-					segment.matchAll(gpt4Pattern),
-					m => m[0]
-				);
-				chunks.forEach(chunk => {
-					if (chunk) parts.push({ text: chunk, isSpecial: false });
-				});
-			}
-		});
-
-		return parts.map((part, index) => (
-			<span
-				key={index}
-				className={`inline-block px-2 py-1 m-1 rounded text-sm border ${
-					part.isSpecial
-						? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 font-bold border-red-300'
-						: getTokenColor(index)
-				}`}
-			>
-				{part.text}
-			</span>
-		));
-	};
-
 	useEffect(() => {
-		const debounceTimeout = setTimeout(() => {
-			if (tokenizer) {
-				const fullText = `<|im_start|>system<|im_sep|>${systemText}<|im_end|><|im_start|>user<|im_sep|>${userText}<|im_end|><|im_start|>assistant<|im_sep|>`;
-				const encoded = encode(fullText);
-				setTokens(encoded);
-			}
-		}, 500); // 300ms debounce delay
+		if (tokenizer && (systemText || userText)) {
+			try {
+				const formattedText = tokenizer.formatChatMessages(
+					systemText,
+					userText
+				);
+				const newTokens = tokenizer.tokenize(formattedText);
+				const newTokenIds = tokenizer.encode(formattedText);
+				const decoded = tokenizer.decode(newTokenIds);
 
-		return () => clearTimeout(debounceTimeout);
-	}, [systemText, userText, tokenizer, encode]);
+				setTokens(newTokens);
+				setTokenIds(newTokenIds);
+				setDecodedText(decoded);
+				setIsVerified(formattedText === decoded);
+			} catch (err) {
+				console.error('Tokenization error:', err);
+				setTokens([]);
+				setTokenIds([]);
+				setDecodedText('');
+				setIsVerified(false);
+			}
+		}
+	}, [systemText, userText, tokenizer]);
 
 	if (loading) {
 		return (
 			<div className='flex items-center justify-center min-h-screen'>
-				<div className='text-lg'>Loading GPT-4 style tokenizer...</div>
-			</div>
-		);
-	}
-
-	if (!tokenizer) {
-		return (
-			<div className='flex items-center justify-center min-h-screen'>
-				<div className='text-lg text-red-600'>
-					Failed to load tokenizer
+				<div className='flex items-center gap-3 animate-pulse'>
+					<Loader2 className='h-8 w-8 animate-spin text-blue-500' />
+					<span className='text-lg animate-bounce'>
+						Loading tokenizer...
+					</span>
+					<div className='flex space-x-1'>
+						<div
+							className='w-2 h-2 bg-blue-500 rounded-full animate-bounce'
+							style={{ animationDelay: '0ms' }}
+						></div>
+						<div
+							className='w-2 h-2 bg-blue-500 rounded-full animate-bounce'
+							style={{ animationDelay: '150ms' }}
+						></div>
+						<div
+							className='w-2 h-2 bg-blue-500 rounded-full animate-bounce'
+							style={{ animationDelay: '300ms' }}
+						></div>
+					</div>
 				</div>
 			</div>
 		);
 	}
+
+	if (error) {
+		return (
+			<div className='max-w-4xl mx-auto p-6'>
+				<Alert
+					variant='destructive'
+					className='animate-in slide-in-from-top-5 duration-500'
+				>
+					<XCircle className='h-4 w-4 animate-spin' />
+					<AlertDescription className='animate-in fade-in-50 delay-300'>
+						Error: {error}
+					</AlertDescription>
+				</Alert>
+			</div>
+		);
+	}
+
+	const originalText =
+		tokenizer?.formatChatMessages(systemText, userText) || '';
+
+	const getTokenColor = (token: string, index: number) => {
+		if (tokenizer?.isSpecialToken(token)) {
+			if (token === '<|im_start|>' || token === '<|im_end|>') {
+				return 'bg-[var(--token-purple-bg)] text-[var(--token-purple-text)] border-[var(--token-purple-border)] hover:bg-[var(--token-purple-hover)]';
+			}
+			return 'bg-[var(--token-rose-bg)] text-[var(--token-rose-text)] border-[var(--token-rose-border)] hover:bg-[var(--token-rose-hover)]';
+		}
+
+		const colors = [
+			'bg-[var(--token-blue-bg)] text-[var(--token-blue-text)] border-[var(--token-blue-border)] hover:bg-[var(--token-blue-hover)]',
+			'bg-[var(--token-green-bg)] text-[var(--token-green-text)] border-[var(--token-green-border)] hover:bg-[var(--token-green-hover)]',
+			'bg-[var(--token-yellow-bg)] text-[var(--token-yellow-text)] border-[var(--token-yellow-border)] hover:bg-[var(--token-yellow-hover)]',
+			'bg-[var(--token-indigo-bg)] text-[var(--token-indigo-text)] border-[var(--token-indigo-border)] hover:bg-[var(--token-indigo-hover)]',
+			'bg-[var(--token-pink-bg)] text-[var(--token-pink-text)] border-[var(--token-pink-border)] hover:bg-[var(--token-pink-hover)]',
+			'bg-[var(--token-cyan-bg)] text-[var(--token-cyan-text)] border-[var(--token-cyan-border)] hover:bg-[var(--token-cyan-hover)]',
+			'bg-[var(--token-orange-bg)] text-[var(--token-orange-text)] border-[var(--token-orange-border)] hover:bg-[var(--token-orange-hover)]',
+			'bg-[var(--token-teal-bg)] text-[var(--token-teal-text)] border-[var(--token-teal-border)] hover:bg-[var(--token-teal-hover)]'
+		];
+
+		return colors[index % colors.length];
+	};
+
+	const getTokenIdColor = (id: number, index: number) => {
+		const colors = [
+			'bg-[var(--tokenid-slate-bg)] text-[var(--tokenid-slate-text)] border-[var(--tokenid-slate-border)] hover:bg-[var(--tokenid-slate-hover)]',
+			'bg-[var(--tokenid-gray-bg)] text-[var(--tokenid-gray-text)] border-[var(--tokenid-gray-border)] hover:bg-[var(--tokenid-gray-hover)]',
+			'bg-[var(--tokenid-zinc-bg)] text-[var(--tokenid-zinc-text)] border-[var(--tokenid-zinc-border)] hover:bg-[var(--tokenid-zinc-hover)]',
+			'bg-[var(--tokenid-neutral-bg)] text-[var(--tokenid-neutral-text)] border-[var(--tokenid-neutral-border)] hover:bg-[var(--tokenid-neutral-hover)]',
+			'bg-[var(--tokenid-stone-bg)] text-[var(--tokenid-stone-text)] border-[var(--tokenid-stone-border)] hover:bg-[var(--tokenid-stone-hover)]'
+		];
+
+		return colors[index % colors.length];
+	};
 
 	return (
-		<div className='min-h-screen bg-background'>
-			<div className='container mx-auto p-6 max-w-4xl'>
-				{/* Header with theme toggle */}
-				<div className='flex justify-between items-center mb-8'>
-					<h1 className='text-3xl font-bold'>GPT-4 Tokenizer</h1>
-					<Select value={theme} onValueChange={setTheme}>
-						<SelectTrigger className='w-32'>
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value='light'>
-								<div className='flex items-center gap-2'>
-									<Sun className='h-4 w-4' />
-									Light
-								</div>
-							</SelectItem>
-							<SelectItem value='dark'>
-								<div className='flex items-center gap-2'>
-									<Moon className='h-4 w-4' />
-									Dark
-								</div>
-							</SelectItem>
-							<SelectItem value='system'>
-								<div className='flex items-center gap-2'>
-									<Monitor className='h-4 w-4' />
-									System
-								</div>
-							</SelectItem>
-						</SelectContent>
-					</Select>
-				</div>
+		<div className='max-w-6xl mx-auto p-6 space-y-8 animate-in fade-in-0 slide-in-from-bottom-5 duration-700'>
+			{/* Theme Toggle Dropdown */}
+			<div className='flex justify-end items-center mb-2'>
+				<Select value={theme} onValueChange={setTheme}>
+					<SelectTrigger className='w-36'>
+						<SelectValue placeholder='Theme' />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value='light'>
+							<span className='flex items-center gap-2'>
+								<Sun className='w-4 h-4 text-yellow-500' />
+								Light
+							</span>
+						</SelectItem>
+						<SelectItem value='dark'>
+							<span className='flex items-center gap-2'>
+								<Moon className='w-4 h-4 text-blue-600' />
+								Dark
+							</span>
+						</SelectItem>
+						<SelectItem value='system'>
+							<span className='flex items-center gap-2'>
+								<Laptop className='w-4 h-4 text-gray-500' />
+								System
+							</span>
+						</SelectItem>
+					</SelectContent>
+				</Select>
+			</div>
+			<div className='text-center animate-in slide-in-from-top-3 duration-500'>
+				<h1 className='text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent animate-in zoom-in-50 duration-700 hover:scale-105 transition-transform cursor-default'>
+					GPT-4 Tokenizer Demo
+				</h1>
+				<p className='text-muted-foreground mt-3 animate-in slide-in-from-top-5 delay-200 duration-500 hover:scale-105 transition-all cursor-default'>
+					Test encoding and decoding with system and user messages
+				</p>
+				<div className='mt-4 w-32 h-1 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full mx-auto animate-in slide-in-from-left-5 delay-300 duration-500'></div>
+			</div>
 
-				{/* Input Cards */}
-				<div className='grid gap-6 mb-6'>
-					<Card>
-						<CardHeader>
-							<Label htmlFor='system'>System</Label>
-						</CardHeader>
-						<CardContent>
+			<div className='grid grid-cols-1 lg:grid-cols-2 gap-8'>
+				<Card className='animate-in slide-in-from-left-5 delay-300 duration-500 hover:shadow-2xl hover:-translate-y-1 transition-all group'>
+					<CardHeader className='group-hover:translate-y-[-2px] transition-transform duration-300'>
+						<CardTitle className='flex items-center gap-3'>
+							<div className='w-3 h-3 bg-blue-500 rounded-full animate-pulse group-hover:animate-bounce'></div>
+							<span className='group-hover:text-blue-600 transition-colors duration-300'>
+								Input Messages
+							</span>
+						</CardTitle>
+						<CardDescription className='group-hover:text-gray-600 transition-colors duration-300'>
+							Enter system and user messages to tokenize
+						</CardDescription>
+					</CardHeader>
+					<CardContent className='space-y-6'>
+						<div className='animate-in slide-in-from-left-5 delay-400 duration-500'>
+							<Label
+								htmlFor='system-text'
+								className='text-sm font-medium hover:text-blue-600 transition-colors duration-200'
+							>
+								System Message
+							</Label>
 							<Textarea
-								id='system'
+								id='system-text'
 								value={systemText}
 								onChange={e => setSystemText(e.target.value)}
-								className='min-h-[60px] resize-none'
-								placeholder='You are a helpful assistant'
+								placeholder='Enter system message...'
+								className='min-h-[90px] transition-all duration-300 focus:ring-2 focus:ring-blue-500 focus:scale-[1.02] hover:shadow-md'
 							/>
-						</CardContent>
-					</Card>
-
-					<Card>
-						<CardHeader>
-							<Label htmlFor='user'>User</Label>
-						</CardHeader>
-						<CardContent>
+						</div>
+						<div className='animate-in slide-in-from-left-5 delay-500 duration-500'>
+							<Label
+								htmlFor='user-text'
+								className='text-sm font-medium hover:text-blue-600 transition-colors duration-200'
+							>
+								User Message
+							</Label>
 							<Textarea
-								id='user'
+								id='user-text'
 								value={userText}
 								onChange={e => setUserText(e.target.value)}
-								className='min-h-[100px]'
-								placeholder='Content'
+								placeholder='Enter user message...'
+								className='min-h-[90px] transition-all duration-300 focus:ring-2 focus:ring-blue-500 focus:scale-[1.02] hover:shadow-md'
 							/>
-						</CardContent>
-					</Card>
-				</div>
+						</div>
+					</CardContent>
+				</Card>
 
-				{/* Add message button */}
-				{/* <div className='mb-6'>
-					<Button onClick={handleTokenize} className='w-full'>
-						Add message
-					</Button>
-				</div> */}
+				<Card className='animate-in slide-in-from-right-5 delay-300 duration-500 hover:shadow-2xl hover:-translate-y-1 transition-all group'>
+					<CardHeader className='group-hover:translate-y-[-2px] transition-transform duration-300'>
+						<CardTitle className='flex items-center gap-3'>
+							<div className='w-3 h-3 bg-green-500 rounded-full animate-pulse group-hover:animate-bounce'></div>
+							<span className='group-hover:text-green-600 transition-colors duration-300'>
+								Statistics & Verification
+							</span>
+						</CardTitle>
+						<CardDescription className='group-hover:text-gray-600 transition-colors duration-300'>
+							Token statistics and encoding verification
+						</CardDescription>
+					</CardHeader>
+					<CardContent>
+						<div className='grid grid-cols-2 gap-6 mb-6'>
+							<div className='text-center p-5 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg transform transition-transform duration-300 hover:scale-105 hover:rotate-1 cursor-pointer group/stat'>
+								<div className='text-4xl font-bold text-blue-600 transition-transform duration-300 group-hover/stat:scale-110'>
+									{originalText.length}
+								</div>
+								<div className='text-sm text-blue-600 transition-colors duration-300 group-hover/stat:font-semibold'>
+									Characters
+								</div>
+							</div>
+							<div className='text-center p-5 bg-gradient-to-br from-green-50 to-green-100 rounded-lg transform transition-transform duration-300 hover:scale-105 hover:rotate-[-1deg] cursor-pointer group/stat'>
+								<div className='text-4xl font-bold text-green-600 transition-transform duration-300 group-hover/stat:scale-110'>
+									{tokens.length}
+								</div>
+								<div className='text-sm text-green-600 transition-colors duration-300 group-hover/stat:font-semibold'>
+									Tokens
+								</div>
+							</div>
+						</div>
 
-				{/* Token visualization */}
-				{tokens.length > 0 && (
-					<div className='space-y-6'>
-						<Card>
-							<CardHeader>
-								<div className='flex justify-between items-center'>
-									<h3 className='text-lg font-semibold'>
-										Token visualization
-									</h3>
-									<span className='text-sm text-muted-foreground'>
-										Token count:{' '}
-										<span className='font-semibold text-foreground'>
-											{tokens.length}
-										</span>
-									</span>
-								</div>
-							</CardHeader>
-							<CardContent>
-								<div className='border rounded-lg p-4 bg-muted/50 overflow-auto'>
-									{renderColoredTokens()}
-								</div>
-							</CardContent>
-						</Card>
+						<div
+							className={`flex items-center gap-3 p-5 rounded-lg border animate-in slide-in-from-bottom-3 delay-800 duration-500 transition-all hover:scale-105 hover:shadow-lg cursor-pointer ${
+								isVerified
+									? 'bg-green-50 border-green-200 hover:bg-green-100'
+									: 'bg-red-50 border-red-200 hover:bg-red-100'
+							}`}
+						>
+							{isVerified ? (
+								<CheckCircle className='h-6 w-6 text-green-500 animate-bounce hover:animate-spin transition-all' />
+							) : (
+								<XCircle className='h-6 w-6 text-red-500 animate-pulse hover:animate-ping transition-all' />
+							)}
+							<span
+								className={`font-medium transition-all hover:font-bold ${
+									isVerified
+										? 'text-green-700'
+										: 'text-red-700'
+								}`}
+							>
+								{isVerified
+									? 'Encoding verified ✓'
+									: 'Encoding mismatch ✗'}
+							</span>
+						</div>
 
-						{/* Token IDs */}
-						<Card>
-							<CardHeader>
-								<h3 className='text-lg font-semibold'>
-									Token IDs
-								</h3>
-							</CardHeader>
-							<CardContent>
-								<div className='font-mono text-sm bg-muted/50 p-4 rounded-lg overflow-x-auto'>
-									{tokens.join(', ')}
-								</div>
-							</CardContent>
-						</Card>
-					</div>
-				)}
+						<div className='mt-6 animate-in slide-in-from-bottom-5 delay-900 duration-500'>
+							<Label className='text-sm font-medium flex items-center gap-2 hover:text-purple-600 transition-colors'>
+								<div className='w-2 h-2 bg-purple-500 rounded-full animate-pulse hover:animate-bounce'></div>
+								Special Tokens Used
+							</Label>
+							<div className='mt-2 text-sm text-muted-foreground hover:text-purple-600 transition-colors'>
+								<span className='font-semibold text-purple-600 animate-pulse hover:animate-bounce inline-block'>
+									{
+										tokens.filter(token =>
+											tokenizer?.isSpecialToken(token)
+										).length
+									}
+								</span>{' '}
+								special tokens detected
+							</div>
+						</div>
+					</CardContent>
+				</Card>
 			</div>
+
+			<Card className='animate-in slide-in-from-bottom-3 delay-400 duration-500 hover:shadow-2xl hover:-translate-y-1 transition-all group'>
+				<CardHeader className='group-hover:translate-y-[-2px] transition-transform duration-300'>
+					<CardTitle className='flex items-center gap-3'>
+						<div className='w-3 h-3 bg-purple-500 rounded-full animate-pulse group-hover:animate-bounce'></div>
+						<span className='group-hover:text-purple-600 transition-colors duration-300'>
+							Formatted Input Text
+						</span>
+					</CardTitle>
+					<CardDescription className='group-hover:text-gray-600 transition-colors duration-300'>
+						Text with special tokens as sent to the model
+					</CardDescription>
+				</CardHeader>
+				<CardContent>
+					<div className='p-5 bg-accent rounded-lg font-mono text-sm whitespace-pre-wrap break-all border animate-in fade-in-0 delay-1000 duration-500 hover:shadow-inner hover:scale-[1.01] transition-all cursor-text'>
+						{originalText}
+					</div>
+				</CardContent>
+			</Card>
+
+			<div className='grid grid-cols-1 lg:grid-cols-2 gap-8'>
+				<Card className='animate-in slide-in-from-left-5 delay-500 duration-500 hover:shadow-2xl hover:-translate-y-1 transition-all group'>
+					<CardHeader className='group-hover:translate-y-[-2px] transition-transform duration-300'>
+						<CardTitle className='flex items-center gap-3'>
+							<div className='w-3 h-3 bg-cyan-500 rounded-full animate-pulse group-hover:animate-bounce'></div>
+							<span className='group-hover:text-cyan-600 transition-colors duration-300'>
+								Tokens ({tokens.length})
+							</span>
+						</CardTitle>
+						<CardDescription className='group-hover:text-gray-600 transition-colors duration-300'>
+							Individual tokens from BPE encoding
+						</CardDescription>
+					</CardHeader>
+					<CardContent>
+						<div className='max-h-80 overflow-y-auto hover:max-h-96 transition-all duration-500'>
+							<div className='flex flex-wrap gap-2 p-3'>
+								{tokens.map((token, index) => (
+									<Badge
+										key={index}
+										className={`font-mono text-xs transition-all duration-500 hover:scale-125 hover:-rotate-2 hover:shadow-lg hover:z-10 cursor-pointer animate-in fade-in-0 slide-in-from-bottom-2 border relative group/token ${getTokenColor(
+											token,
+											index
+										)}`}
+										style={{
+											animationDelay: `${
+												index * 30 + 1100
+											}ms`
+										}}
+										title={`Token ${index}: "${token}"`}
+									>
+										<span className='group-hover/token:animate-pulse'>
+											{token
+												.replace(/\s/g, '·')
+												.replace(/\n/g, '↵')}
+										</span>
+									</Badge>
+								))}
+							</div>
+						</div>
+					</CardContent>
+				</Card>
+
+				<Card className='animate-in slide-in-from-right-5 delay-500 duration-500 hover:shadow-2xl hover:-translate-y-1 transition-all group'>
+					<CardHeader className='group-hover:translate-y-[-2px] transition-transform duration-300'>
+						<CardTitle className='flex items-center gap-3'>
+							<div className='w-3 h-3 bg-orange-500 rounded-full animate-pulse group-hover:animate-bounce'></div>
+							<span className='group-hover:text-orange-600 transition-colors duration-300'>
+								Token IDs ({tokenIds.length})
+							</span>
+						</CardTitle>
+						<CardDescription className='group-hover:text-gray-600 transition-colors duration-300'>
+							Numeric token identifiers
+						</CardDescription>
+					</CardHeader>
+					<CardContent>
+						<div className='max-h-80 overflow-y-auto hover:max-h-96 transition-all duration-500'>
+							<div className='flex flex-wrap gap-2 p-3'>
+								{tokenIds.map((id, index) => (
+									<Badge
+										key={index}
+										className={`font-mono text-xs transition-all duration-500 hover:scale-125 hover:rotate-2 hover:shadow-lg hover:z-10 cursor-pointer animate-in fade-in-0 slide-in-from-bottom-2 border relative group/token ${getTokenIdColor(
+											id,
+											index
+										)}`}
+										style={{
+											animationDelay: `${
+												index * 30 + 1100
+											}ms`
+										}}
+										title={`Token ${index}: "${tokens[index]}" → ${id}`}
+									>
+										<span className='group-hover/token:animate-pulse'>
+											{id}
+										</span>
+									</Badge>
+								))}
+							</div>
+						</div>
+					</CardContent>
+				</Card>
+			</div>
+
+			<Card className='animate-in slide-in-from-bottom-5 delay-600 duration-500 hover:shadow-2xl hover:-translate-y-1 transition-all group'>
+				<CardHeader className='group-hover:translate-y-[-2px] transition-transform duration-300'>
+					<CardTitle className='flex items-center gap-3'>
+						<div className='w-3 h-3 bg-emerald-500 rounded-full animate-pulse group-hover:animate-bounce'></div>
+						<span className='group-hover:text-emerald-600 transition-colors duration-300'>
+							Decoded Text
+						</span>
+					</CardTitle>
+					<CardDescription className='group-hover:text-gray-600 transition-colors duration-300'>
+						Text reconstructed from token IDs
+					</CardDescription>
+				</CardHeader>
+				<CardContent>
+					<div className='p-5 bg-accent rounded-lg font-mono text-sm whitespace-pre-wrap break-all border animate-in fade-in-0 delay-1200 duration-500 hover:shadow-inner hover:scale-[1.01] transition-all cursor-text'>
+						{decodedText}
+					</div>
+				</CardContent>
+			</Card>
+
+			{/* Floating animation elements */}
+			<div
+				className='fixed top-10 left-10 w-4 h-4 bg-blue-200 rounded-full animate-bounce opacity-20 pointer-events-none'
+				style={{ animationDelay: '0s', animationDuration: '3s' }}
+			></div>
+			<div
+				className='fixed top-20 right-20 w-3 h-3 bg-purple-200 rounded-full animate-bounce opacity-20 pointer-events-none'
+				style={{ animationDelay: '1s', animationDuration: '4s' }}
+			></div>
+			<div
+				className='fixed bottom-20 left-20 w-5 h-5 bg-green-200 rounded-full animate-bounce opacity-20 pointer-events-none'
+				style={{ animationDelay: '2s', animationDuration: '5s' }}
+			></div>
+			<div
+				className='fixed bottom-10 right-10 w-2 h-2 bg-orange-200 rounded-full animate-bounce opacity-20 pointer-events-none'
+				style={{ animationDelay: '0.5s', animationDuration: '3.5s' }}
+			></div>
 		</div>
 	);
 }

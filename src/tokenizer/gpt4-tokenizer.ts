@@ -1,403 +1,354 @@
-import * as fs from 'fs';
-import * as readline from 'readline';
+export interface TokenizerData {
+  vocab: Record<string, number>;
+  merges: string[];
+}
 
 export class GPT4Tokenizer {
-  private vocab: Map<string, number> = new Map();
-  private merges: Map<string, number> = new Map();
-  private specialTokens: Map<string, number> = new Map();
-  nextTokenId: number = 256;
+  private vocab: Record<string, number>;
+  private bpeRanks: Record<string, number>;
+  private cache: Record<string, string[]> = {};
+  private reverseVocab: Record<number, string> = {};
 
-  // GPT-4 regex pattern for pre-tokenization
-  private readonly gpt4Pattern = /'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu;
+  // GPT-4's exact regex pattern
+  private readonly pattern = /'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu;
 
-  constructor() {
-    // Initialize byte-level vocabulary (0-255)
-    for (let i = 0; i < 256; i++) {
-      this.vocab.set(this.bytesToUnicode()[i], i);
-    }
+  // Complete set of special tokens used in GPT-4
+  private specialTokens = {
+    // Chat format tokens
+    '<|im_start|>': 100264,
+    '<|im_end|>': 100265,
+    '<|im_sep|>': 100266,
 
-    // Add special tokens
-    this.addSpecialTokens();
+    // System tokens
+    '<|endoftext|>': 100257,
+    '<|fim_prefix|>': 100258,
+    '<|fim_middle|>': 100259,
+    '<|fim_suffix|>': 100260,
+
+    // Additional OpenAI tokens
+    '<|startoftext|>': 100261,
+    '<|endofprompt|>': 100262,
+    '<|startofsystem|>': 100263,
+    '<|endofsystem|>': 100267,
+    '<|startofuser|>': 100268,
+    '<|endofuser|>': 100269,
+    '<|startofassistant|>': 100270,
+    '<|endofassistant|>': 100271,
+
+    // Function calling tokens
+    '<|function_call|>': 100272,
+    '<|function_response|>': 100273,
+
+    // Tool use tokens
+    '<|tool_call|>': 100274,
+    '<|tool_response|>': 100275,
+
+    // Additional system tokens
+    '<|system|>': 100276,
+    '<|user|>': 100277,
+    '<|assistant|>': 100278,
+
+    // Code tokens
+    '<|code|>': 100279,
+    '<|/code|>': 100280,
+
+    // Thought tokens (for reasoning)
+    '<|thought|>': 100281,
+    '<|/thought|>': 100282
+  };
+
+  // Byte-to-character mapping used by GPT-4
+  private byteEncoder!: Record<number, string>;
+  private byteDecoder!: Record<string, number>;
+
+  constructor(data: TokenizerData) {
+    this.vocab = { ...data.vocab, ...this.specialTokens };
+
+    // Create reverse vocab for decoding
+    Object.entries(this.vocab).forEach(([token, id]) => {
+      this.reverseVocab[id] = token;
+    });
+
+    // Create BPE ranks from merges
+    this.bpeRanks = {};
+    data.merges.forEach((merge, index) => {
+      this.bpeRanks[merge] = index;
+    });
+
+    // Initialize byte encoder/decoder
+    this.initializeByteMappings();
   }
 
-  private bytesToUnicode(): string[] {
-    // Create mapping from bytes to unicode strings
-    const bs: number[] = [];
+  private initializeByteMappings() {
+    // Create the byte-to-character mapping used by GPT-4
+    const bytes: number[] = [];
 
-    // Printable ASCII
-    for (let i = 33; i <= 126; i++) bs.push(i);
-    for (let i = 161; i <= 172; i++) bs.push(i);
-    for (let i = 174; i <= 255; i++) bs.push(i);
+    // Add printable ASCII characters
+    for (let i = 33; i <= 126; i++) {
+      bytes.push(i);
+    }
+    for (let i = 161; i <= 172; i++) {
+      bytes.push(i);
+    }
+    for (let i = 174; i <= 255; i++) {
+      bytes.push(i);
+    }
 
-    const cs = [...bs];
+  const cs = bytes.slice();
     let n = 0;
 
-    // Add shifted versions for non-printable bytes
+    // Add remaining bytes with offset
     for (let b = 0; b < 256; b++) {
-      if (!bs.includes(b)) {
-        bs.push(b);
+      if (!bytes.includes(b)) {
+        bytes.push(b);
         cs.push(256 + n);
         n++;
       }
     }
 
-    return cs.map(c => String.fromCharCode(c));
+    // Create the mapping
+    this.byteEncoder = {};
+    this.byteDecoder = {};
+
+    cs.forEach((c, i) => {
+      const char = String.fromCharCode(c);
+      this.byteEncoder[bytes[i]] = char;
+      this.byteDecoder[char] = bytes[i];
+    });
   }
 
-  private addSpecialTokens(): void {
-    const specialTokensList = [
-      '<|endoftext|>',
-      '<|im_start|>',
-      '<|im_end|>',
-      '<|im_sep|>'
-    ];
-
-    for (const token of specialTokensList) {
-      this.specialTokens.set(token, this.nextTokenId);
-      this.vocab.set(token, this.nextTokenId);
-      this.nextTokenId++;
+  private getPairs(word: string[]): string[] {
+    const pairs: string[] = [];
+    for (let i = 0; i < word.length - 1; i++) {
+      pairs.push(`${word[i]} ${word[i + 1]}`);
     }
-  }
-
-  private getPairs(word: number[]): Set<string> {
-    const pairs = new Set<string>();
-    let prevChar = word[0];
-
-    for (let i = 1; i < word.length; i++) {
-      pairs.add(`${prevChar},${word[i]}`);
-      prevChar = word[i];
-    }
-
     return pairs;
   }
 
-  getStats(vocab: Map<string, number>): Map<string, number> {
-    const pairs = new Map<string, number>();
+  private bpe(token: string): string[] {
+    if (this.cache[token]) {
+      return this.cache[token];
+    }
 
-    for (const [word, freq] of vocab) {
-      const symbol = JSON.parse(word) as number[];
-      const wordPairs = this.getPairs(symbol);
+    // Convert to byte-level representation
+    const utf8Bytes = Array.from(new TextEncoder().encode(token));
+    let word = utf8Bytes.map(byte => this.byteEncoder[byte]);
 
-      for (const pair of wordPairs) {
-        pairs.set(pair, (pairs.get(pair) || 0) + freq);
+    if (word.length <= 1) {
+      this.cache[token] = word;
+      return word;
+    }
+
+    while (true) {
+      const pairs = this.getPairs(word);
+      if (pairs.length === 0) break;
+
+      let minPair: string | null = null;
+      let minRank = Infinity;
+
+      for (const pair of pairs) {
+        const rank = this.bpeRanks[pair];
+        if (rank !== undefined && rank < minRank) {
+          minRank = rank;
+          minPair = pair;
+        }
       }
-    }
 
-    return pairs;
-  }
+      if (minPair === null) break;
 
-  mergeBestPair(vocab: Map<string, number>, bestPair: string): Map<string, number> {
-    const [first, second] = bestPair.split(',').map(Number);
-    const newVocab = new Map<string, number>();
-
-    for (const [word, freq] of vocab) {
-      const symbol = JSON.parse(word) as number[];
-      const newWord: number[] = [];
+      const [first, second] = minPair.split(' ');
+      const newWord: string[] = [];
       let i = 0;
 
-      while (i < symbol.length) {
-        if (i < symbol.length - 1 && symbol[i] === first && symbol[i + 1] === second) {
-          newWord.push(this.nextTokenId - 1); // The newly created token
-          i += 2;
+      while (i < word.length) {
+        const j = word.indexOf(first, i);
+
+        if (j === -1) {
+          newWord.push(...word.slice(i));
+          break;
+        }
+
+        newWord.push(...word.slice(i, j));
+
+        if (j < word.length && word[j] === first && j + 1 < word.length && word[j + 1] === second) {
+          newWord.push(first + second);
+          i = j + 2;
         } else {
-          newWord.push(symbol[i]);
-          i += 1;
+          newWord.push(word[j]);
+          i = j + 1;
         }
       }
 
-      newVocab.set(JSON.stringify(newWord), freq);
+      word = newWord;
+      if (word.length === 1) break;
     }
 
-    return newVocab;
+    this.cache[token] = word;
+    return word;
   }
 
-  async train(textFilePath: string, vocabSize: number = 50000): Promise<void> {
-    console.log('Starting GPT-4 style BPE training...');
-
-    // Read training text
-    const text = fs.readFileSync(textFilePath, 'utf-8');
-
-    // Step 1: Pre-tokenization using GPT-4 regex pattern
-    const chunks = Array.from(text.matchAll(this.gpt4Pattern), m => m[0]);
-    console.log(`Pre-tokenized into ${chunks.length} chunks`);
-
-    // Step 2: Convert chunks to bytes and count frequencies
-    const vocab = new Map<string, number>();
-
-    for (const chunk of chunks) {
-      const bytes = Array.from(new TextEncoder().encode(chunk));
-      const key = JSON.stringify(bytes);
-
-      vocab.set(key, (vocab.get(key) || 0) + 1);
-    }
-
-    console.log(`Created vocabulary with ${vocab.size} unique byte sequences`);
-
-    // Step 3: Apply BPE merging
-    let mergeCount = 0;
-
-    while (this.vocab.size < vocabSize) {
-      const pairs = this.getStats(vocab);
-
-      if (pairs.size === 0) break;
-
-      // Find most frequent pair
-      let bestPair = '';
-      let maxCount = 0;
-
-      for (const [pair, count] of pairs) {
-        if (count > maxCount) {
-          maxCount = count;
-          bestPair = pair;
-        }
-      }
-
-      if (maxCount < 2) break;
-
-      // Record the merge
-      this.merges.set(bestPair, this.nextTokenId);
-
-      // Add merged token to vocabulary
-      const mergeKey = `merge_${bestPair.replace(',', '_')}`;
-      this.vocab.set(mergeKey, this.nextTokenId);
-
-      // Apply merge to vocabulary
-      const newVocab = this.mergeBestPair(vocab, bestPair);
-      vocab.clear();
-      for (const [k, v] of newVocab) {
-        vocab.set(k, v);
-      }
-
-      mergeCount++;
-      if (mergeCount % 100 === 0) {
-        console.log(`Completed ${mergeCount} merges, vocab size: ${this.vocab.size}`);
-      }
-
-      this.nextTokenId++;
-    }
-
-    console.log(`Training complete! Final vocabulary size: ${this.vocab.size}`);
-  }
-
-  // Add this method to your GPT4Tokenizer class
-async trainFromFile(textFilePath: string, vocabSize: number = 50000, batchSize: number = 100000): Promise<void> {
-  console.log('Starting memory-efficient GPT-4 style BPE training...');
-
-  // Step 1: Count vocabulary in batches
-  const vocab = new Map<string, number>();
-  let totalLines = 0;
-
-  const fileStream = fs.createReadStream(textFilePath);
-  const rl = readline.createInterface({
-    input: fileStream,
-    crlfDelay: Infinity
-  });
-
-  let batchText = '';
-  let linesInBatch = 0;
-
-  for await (const line of rl) {
-    batchText += line + '\n';
-    linesInBatch++;
-    totalLines++;
-
-    // Process batch when it reaches batchSize
-    if (linesInBatch >= batchSize) {
-      console.log(`Processing batch ending at line ${totalLines}...`);
-      this.processBatch(batchText, vocab);
-
-      // Clear batch
-      batchText = '';
-      linesInBatch = 0;
-
-      // Force garbage collection if available
-      if (global.gc) {
-        global.gc();
-      }
+  // Enhanced chat message formatting with more options
+  public formatChatMessages(systemText: string, userText: string, useNewFormat: boolean = false): string {
+    if (useNewFormat) {
+      // Alternative format using newer tokens
+      return `<|startofsystem|>${systemText}<|endofsystem|>\n<|startofuser|>${userText}<|endofuser|>\n<|startofassistant|>`;
+    } else {
+      // Standard OpenAI chat format
+      return `<|im_start|>system\n${systemText}<|im_end|>\n<|im_start|>user\n${userText}<|im_end|>\n<|im_start|>assistant\n`;
     }
   }
 
-  // Process final batch
-  if (batchText) {
-    console.log(`Processing final batch...`);
-    this.processBatch(batchText, vocab);
+  // Method to format function calling
+  public formatFunctionCall(functionName: string, args: string): string {
+    return `<|function_call|>\n{"name": "${functionName}", "arguments": ${args}}\n<|function_response|>`;
   }
 
-  console.log(`Total lines processed: ${totalLines}`);
-  console.log(`Unique byte sequences: ${vocab.size}`);
-
-  // Step 2: Apply BPE merging
-  await this.performBPEMerging(vocab, vocabSize);
-
-  console.log(`Training complete! Final vocabulary size: ${this.vocab.size}`);
-}
-
-private processBatch(text: string, vocab: Map<string, number>): void {
-  // Pre-tokenize using GPT-4 regex pattern
-  const chunks = Array.from(text.matchAll(this.gpt4Pattern), m => m[0]);
-
-  // Count byte sequences
-  for (const chunk of chunks) {
-    const bytes = Array.from(new TextEncoder().encode(chunk));
-    const key = JSON.stringify(bytes);
-    vocab.set(key, (vocab.get(key) || 0) + 1);
+  // Method to format tool use
+  public formatToolCall(toolName: string, input: string): string {
+    return `<|tool_call|>\n{"tool": "${toolName}", "input": "${input}"}\n<|tool_response|>`;
   }
-}
 
-private async performBPEMerging(vocab: Map<string, number>, vocabSize: number): Promise<void> {
-  let mergeCount = 0;
+  // Method to format code blocks
+  public formatCodeBlock(code: string): string {
+    return `<|code|>\n${code}\n<|/code|>`;
+  }
 
-  while (this.vocab.size < vocabSize) {
-    const pairs = this.getStats(vocab);
+  // Method to format reasoning/thoughts
+  public formatThought(thought: string): string {
+    return `<|thought|>\n${thought}\n<|/thought|>`;
+  }
 
-    if (pairs.size === 0) break;
+  private splitBySpecialTokens(text: string): Array<{ text: string; isSpecial: boolean }> {
+    const specialTokenRegex = new RegExp(
+      Object.keys(this.specialTokens)
+        .sort((a, b) => b.length - a.length)
+        .map(token => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('|'),
+      'g'
+    );
 
-    // Find most frequent pair
-    let bestPair = '';
-    let maxCount = 0;
+    const parts: Array<{ text: string; isSpecial: boolean }> = [];
+    let lastIndex = 0;
+    let match;
 
-    for (const [pair, count] of pairs) {
-      if (count > maxCount) {
-        maxCount = count;
-        bestPair = pair;
+    while ((match = specialTokenRegex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push({
+          text: text.slice(lastIndex, match.index),
+          isSpecial: false
+        });
       }
+
+      parts.push({
+        text: match[0],
+        isSpecial: true
+      });
+
+      lastIndex = match.index + match[0].length;
     }
 
-    if (maxCount < 2) break;
-
-    // Record the merge
-    this.merges.set(bestPair, this.nextTokenId);
-
-    // Add merged token to vocabulary
-    const mergeKey = `merge_${bestPair.replace(',', '_')}`;
-    this.vocab.set(mergeKey, this.nextTokenId);
-
-    // Apply merge to vocabulary
-    const newVocab = this.mergeBestPair(vocab, bestPair);
-    vocab.clear();
-    for (const [k, v] of newVocab) {
-      vocab.set(k, v);
+    if (lastIndex < text.length) {
+      parts.push({
+        text: text.slice(lastIndex),
+        isSpecial: false
+      });
     }
 
-    mergeCount++;
-    if (mergeCount % 50 === 0) {
-      console.log(`Completed ${mergeCount} merges, vocab size: ${this.vocab.size}`);
-
-      // Force garbage collection
-      if (global.gc) {
-        global.gc();
-      }
-    }
-
-    this.nextTokenId++;
+    return parts;
   }
-}
 
+  public encode(text: string): number[] {
+    const parts = this.splitBySpecialTokens(text);
+    const allTokens: string[] = [];
 
-  encode(text: string): number[] {
-    // Handle special tokens first
-    const processedText = text;
-    const specialTokens: number[] = [];
-
-    // Check for special tokens
-    for (const [specialToken, tokenId] of this.specialTokens) {
-      if (text.includes(specialToken)) {
-        const parts = text.split(specialToken);
-        if (parts.length > 1) {
-          specialTokens.push(tokenId);
+    for (const part of parts) {
+      if (part.isSpecial) {
+        allTokens.push(part.text);
+      } else if (part.text) {
+        const matches = Array.from(part.text.matchAll(this.pattern));
+        for (const match of matches) {
+          if (match[0]) {
+            const bpeTokens = this.bpe(match[0]);
+            allTokens.push(...bpeTokens);
+          }
         }
       }
     }
 
-    // Pre-tokenize using GPT-4 regex
-    const chunks = Array.from(processedText.matchAll(this.gpt4Pattern), m => m[0]);
-    const allTokens: number[] = [];
-
-    for (const chunk of chunks) {
-      // Check if this chunk is a special token
-      const specialTokenId = this.specialTokens.get(chunk);
-      if (specialTokenId !== undefined) {
-        allTokens.push(specialTokenId);
-        continue;
+    return allTokens.map(token => {
+      const id = this.vocab[token];
+      if (id === undefined) {
+        console.warn(`Unknown token: ${JSON.stringify(token)}`);
+        return this.vocab['<|endoftext|>'] || 0;
       }
-
-      // Convert to bytes and apply BPE
-      let tokens = Array.from(new TextEncoder().encode(chunk));
-
-      // Apply learned merges in order
-      const sortedMerges = Array.from(this.merges.entries())
-        .sort((a, b) => a[1] - b[1]);
-
-      for (const [pairKey, newToken] of sortedMerges) {
-        const [first, second] = pairKey.split(',').map(Number);
-        tokens = this.applyMerge(tokens, first, second, newToken);
-      }
-
-      allTokens.push(...tokens);
-    }
-
-    return allTokens;
+      return id;
+    });
   }
 
-  private applyMerge(tokens: number[], first: number, second: number, newToken: number): number[] {
-    const result: number[] = [];
-    let i = 0;
+  public decode(tokenIds: number[]): string {
+    const tokens = tokenIds.map(id => {
+      const token = this.reverseVocab[id];
+      if (token === undefined) {
+        console.warn(`Unknown token ID: ${id}`);
+        return '';
+      }
+      return token;
+    });
 
-    while (i < tokens.length) {
-      if (i < tokens.length - 1 && tokens[i] === first && tokens[i + 1] === second) {
-        result.push(newToken);
-        i += 2;
+    // Handle special tokens separately
+    let result = '';
+    for (const token of tokens) {
+      if (Object.keys(this.specialTokens).includes(token)) {
+        result += token;
       } else {
-        result.push(tokens[i]);
-        i += 1;
+        // Convert byte-encoded token back to bytes
+        const bytes: number[] = [];
+        for (const char of token) {
+          const byte = this.byteDecoder[char];
+          if (byte !== undefined) {
+            bytes.push(byte);
+          }
+        }
+
+        try {
+          result += new TextDecoder().decode(new Uint8Array(bytes));
+        } catch {
+          result += token; // Fallback
+        }
       }
     }
 
     return result;
   }
 
-  save(directory: string): void {
-    if (!fs.existsSync(directory)) {
-      fs.mkdirSync(directory, { recursive: true });
+  public tokenize(text: string): string[] {
+    const parts = this.splitBySpecialTokens(text);
+    const allTokens: string[] = [];
+
+    for (const part of parts) {
+      if (part.isSpecial) {
+        allTokens.push(part.text);
+      } else if (part.text) {
+        const matches = Array.from(part.text.matchAll(this.pattern));
+        for (const match of matches) {
+          if (match[0]) {
+            const bpeTokens = this.bpe(match[0]);
+            allTokens.push(...bpeTokens);
+          }
+        }
+      }
     }
 
-    // Save vocabulary
-    const vocabObj = Object.fromEntries(this.vocab);
-    fs.writeFileSync(
-      `${directory}/vocab.json`,
-      JSON.stringify(vocabObj, null, 2)
-    );
-
-    // Save merges
-    const mergesObj = Object.fromEntries(this.merges);
-    fs.writeFileSync(
-      `${directory}/merges.json`,
-      JSON.stringify(mergesObj, null, 2)
-    );
-
-    // Save special tokens
-    const specialTokensObj = Object.fromEntries(this.specialTokens);
-    fs.writeFileSync(
-      `${directory}/special_tokens.json`,
-      JSON.stringify(specialTokensObj, null, 2)
-    );
-
-    console.log(`GPT-4 style tokenizer saved to ${directory}`);
+    return allTokens;
   }
 
-  load(directory: string): void {
-    const vocabData = fs.readFileSync(`${directory}/vocab.json`, 'utf8');
-    const vocabObj = JSON.parse(vocabData);
-    this.vocab = new Map(Object.entries(vocabObj).map(([k, v]) => [k, v as number]));
+  // Utility method to get all special tokens
+  public getSpecialTokens(): Record<string, number> {
+    return { ...this.specialTokens };
+  }
 
-    const mergesData = fs.readFileSync(`${directory}/merges.json`, 'utf8');
-    const mergesObj = JSON.parse(mergesData);
-    this.merges = new Map(Object.entries(mergesObj).map(([k, v]) => [k, v as number]));
-
-    const specialTokensData = fs.readFileSync(`${directory}/special_tokens.json`, 'utf8');
-    const specialTokensObj = JSON.parse(specialTokensData);
-    this.specialTokens = new Map(Object.entries(specialTokensObj).map(([k, v]) => [k, v as number]));
-
-    console.log('GPT-4 style tokenizer loaded successfully');
+  // Method to check if a token is special
+  public isSpecialToken(token: string): boolean {
+    return token in this.specialTokens;
   }
 }
