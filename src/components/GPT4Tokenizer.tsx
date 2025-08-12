@@ -12,7 +12,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { Monitor, Moon, Sun } from 'lucide-react';
 import { useTheme } from 'next-themes';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 interface TokenizerData {
 	vocab: Record<string, number>;
@@ -97,66 +97,75 @@ export default function GPT4Tokenizer() {
 		loadTokenizer();
 	}, []);
 
-	const encode = (text: string): number[] => {
-		if (!tokenizer) return [];
+	const encode = useCallback(
+		(text: string): number[] => {
+			if (!tokenizer) return [];
 
-		// Handle special tokens first
-		const processedText = text;
-		const specialTokenMatches: Array<{
-			token: string;
-			id: number;
-			start: number;
-			end: number;
-		}> = [];
+			// Handle special tokens first
+			const processedText = text;
+			const specialTokenMatches: Array<{
+				token: string;
+				id: number;
+				start: number;
+				end: number;
+			}> = [];
 
-		// Find all special tokens in the text
-		for (const [specialToken, tokenId] of Object.entries(
-			tokenizer.specialTokens
-		)) {
-			let startIndex = 0;
-			while (true) {
-				const index = processedText.indexOf(specialToken, startIndex);
-				if (index === -1) break;
+			// Find all special tokens in the text
+			for (const [specialToken, tokenId] of Object.entries(
+				tokenizer.specialTokens
+			)) {
+				let startIndex = 0;
+				while (true) {
+					const index = processedText.indexOf(
+						specialToken,
+						startIndex
+					);
+					if (index === -1) break;
 
-				specialTokenMatches.push({
-					token: specialToken,
-					id: tokenId,
-					start: index,
-					end: index + specialToken.length
-				});
-				startIndex = index + specialToken.length;
-			}
-		}
-
-		// Sort special token matches by position
-		specialTokenMatches.sort((a, b) => a.start - b.start);
-
-		// Process text with special tokens
-		const allTokens: number[] = [];
-		let currentPos = 0;
-
-		for (const match of specialTokenMatches) {
-			// Process text before special token
-			if (currentPos < match.start) {
-				const beforeText = processedText.slice(currentPos, match.start);
-				const beforeTokens = encodeRegularText(beforeText);
-				allTokens.push(...beforeTokens);
+					specialTokenMatches.push({
+						token: specialToken,
+						id: tokenId,
+						start: index,
+						end: index + specialToken.length
+					});
+					startIndex = index + specialToken.length;
+				}
 			}
 
-			// Add special token
-			allTokens.push(match.id);
-			currentPos = match.end;
-		}
+			// Sort special token matches by position
+			specialTokenMatches.sort((a, b) => a.start - b.start);
 
-		// Process remaining text
-		if (currentPos < processedText.length) {
-			const remainingText = processedText.slice(currentPos);
-			const remainingTokens = encodeRegularText(remainingText);
-			allTokens.push(...remainingTokens);
-		}
+			// Process text with special tokens
+			const allTokens: number[] = [];
+			let currentPos = 0;
 
-		return allTokens;
-	};
+			for (const match of specialTokenMatches) {
+				// Process text before special token
+				if (currentPos < match.start) {
+					const beforeText = processedText.slice(
+						currentPos,
+						match.start
+					);
+					const beforeTokens = encodeRegularText(beforeText);
+					allTokens.push(...beforeTokens);
+				}
+
+				// Add special token
+				allTokens.push(match.id);
+				currentPos = match.end;
+			}
+
+			// Process remaining text
+			if (currentPos < processedText.length) {
+				const remainingText = processedText.slice(currentPos);
+				const remainingTokens = encodeRegularText(remainingText);
+				allTokens.push(...remainingTokens);
+			}
+
+			return allTokens;
+		},
+		[tokenizer]
+	);
 
 	const encodeRegularText = (text: string): number[] => {
 		if (!tokenizer || !text) return [];
