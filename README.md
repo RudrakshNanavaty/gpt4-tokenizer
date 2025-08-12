@@ -1,36 +1,84 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# [Live Demo](https://gpt4-tokenizer-sable.vercel.app/)
+
+# GPT Tokenizer Next
+
+A modern web application for experimenting with GPT-4 tokenization, built with Next.js and TypeScript. This project allows users to tokenize text using GPT-4's tokenizer, visualize token breakdowns, and explore vocabulary and merge rules interactively.
+
+## Features
+
+-   **Tokenize Text**: Input text and see how it is tokenized using GPT-4's tokenizer.
+-   **Token Visualization**: View tokens, their IDs, and corresponding strings.
+-   **Vocabulary Explorer**: Browse the vocabulary and merge rules used by the tokenizer.
+-   **Modern UI**: Built with React, TypeScript, and a beautiful, responsive design.
+
+## Project Structure
+
+```
+├── public/tokenizer/           # Tokenizer data files (vocab, merges, special tokens)
+├── scripts/                    # Utility scripts (e.g., training tokenizer)
+├── src/
+│   ├── app/                    # Next.js app directory
+│   ├── components/             # React components
+│   ├── lib/                    # Utility functions
+│   └── tokenizer/              # GPT-4 tokenizer implementation
+├── package.json                # Project dependencies and scripts
+├── next.config.ts              # Next.js configuration
+├── tsconfig.json               # TypeScript configuration
+└── README.md                   # Project documentation
+```
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+-   [Node.js](https://nodejs.org/) (v18 or later recommended)
+-   [pnpm](https://pnpm.io/) (or npm/yarn)
+
+### Installation
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Running the Development Server
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+pnpm dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open [http://localhost:3000](http://localhost:3000) in your browser to see the app.
 
-## Learn More
+### Building for Production
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+pnpm build
+pnpm start
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Scripts
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+-   `pnpm dev` — Start the development server
+-   `pnpm build` — Build the app for production
+-   `pnpm start` — Start the production server
+-   `pnpm lint` — Run ESLint
+-   `pnpm format` — Format code with Prettier
 
-## Deploy on Vercel
+## Tokenizer Data
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Tokenizer files are located in `public/tokenizer/`:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+-   `vocab.json` — Vocabulary mapping
+-   `merges.txt` — Merge rules
+-   `special_tokens_map.json` — Special tokens
+
+## Contributing
+
+Contributions are welcome! Please open issues or pull requests for improvements or bug fixes.
+
+## License
+
+MIT License
+
+---
+
+**Author:** Rudraksh Nanavaty
