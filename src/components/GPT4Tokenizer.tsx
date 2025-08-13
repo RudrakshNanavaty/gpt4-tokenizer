@@ -249,13 +249,15 @@ export default function GPT4TokenizerDemo() {
 							>
 								System Message
 							</Label>
-							<Textarea
-								id='system-text'
-								value={systemText}
-								onChange={e => setSystemText(e.target.value)}
-								placeholder='Enter system message...'
-								className='min-h-[90px] transition-all duration-300 focus:ring-2 focus:ring-blue-500 focus:scale-[1.02] hover:shadow-md'
-							/>
+							<div className="mt-2">
+								<Textarea
+									id='system-text'
+									value={systemText}
+									onChange={e => setSystemText(e.target.value)}
+									placeholder='Enter system message...'
+									className='min-h-[90px] transition-all duration-300 focus:ring-2 focus:ring-blue-500 focus:scale-[1.02] hover:shadow-md'
+								/>
+							</div>
 						</div>
 						<div className='animate-in slide-in-from-left-5 delay-500 duration-500'>
 							<Label
@@ -264,13 +266,15 @@ export default function GPT4TokenizerDemo() {
 							>
 								User Message
 							</Label>
-							<Textarea
-								id='user-text'
-								value={userText}
-								onChange={e => setUserText(e.target.value)}
-								placeholder='Enter user message...'
-								className='min-h-[90px] transition-all duration-300 focus:ring-2 focus:ring-blue-500 focus:scale-[1.02] hover:shadow-md'
-							/>
+							<div className="mt-2">
+								<Textarea
+									id='user-text'
+									value={userText}
+									onChange={e => setUserText(e.target.value)}
+									placeholder='Enter user message...'
+									className='min-h-[90px] transition-all duration-300 focus:ring-2 focus:ring-blue-500 focus:scale-[1.02] hover:shadow-md'
+								/>
+							</div>
 						</div>
 					</CardContent>
 				</Card>
