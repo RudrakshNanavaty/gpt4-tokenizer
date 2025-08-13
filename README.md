@@ -15,7 +15,7 @@ A modern web application for experimenting with GPT tokenization, built with Nex
 
 ```
 ├── public/tokenizer/           # Tokenizer data files (vocab, merges, special tokens)
-├── scripts/                    # Utility scripts (e.g., training tokenizer)
+├── scripts/                    # Utility scripts
 ├── src/
 │   ├── app/                    # Next.js app directory
 │   ├── components/             # React components
