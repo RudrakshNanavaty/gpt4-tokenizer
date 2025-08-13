@@ -3,16 +3,16 @@ export interface TokenizerData {
   merges: string[];
 }
 
-export class GPT4Tokenizer {
+export class GPTTokenizer {
   private vocab: Record<string, number>;
   private bpeRanks: Record<string, number>;
   private cache: Record<string, string[]> = {};
   private reverseVocab: Record<number, string> = {};
 
-  // GPT-4's exact regex pattern
+  // GPT'spre-tokenization regex pattern
   private readonly pattern = /'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu;
 
-  // Complete set of special tokens used in GPT-4
+  // Complete set of special tokens used in GPT
   private specialTokens = {
     // Chat format tokens
     '<|im_start|>': 100264,
@@ -57,7 +57,7 @@ export class GPT4Tokenizer {
     '<|/thought|>': 100282
   };
 
-  // Byte-to-character mapping used by GPT-4
+  // Byte-to-character mapping used by GPT
   private byteEncoder!: Record<number, string>;
   private byteDecoder!: Record<string, number>;
 
@@ -80,7 +80,7 @@ export class GPT4Tokenizer {
   }
 
   private initializeByteMappings() {
-    // Create the byte-to-character mapping used by GPT-4
+    // Create the byte-to-character mapping used by GPT
     const bytes: number[] = [];
 
     // Add printable ASCII characters

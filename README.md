@@ -2,11 +2,11 @@
 
 # GPT Tokenizer Next
 
-A modern web application for experimenting with GPT-4 tokenization, built with Next.js and TypeScript. This project allows users to tokenize text using GPT-4's tokenizer, visualize token breakdowns, and explore vocabulary and merge rules interactively.
+A modern web application for experimenting with GPT tokenization, built with Next.js and TypeScript. This project allows users to tokenize text using GPT's tokenizer, visualize token breakdowns, and explore vocabulary and merge rules interactively.
 
 ## Features
 
--   **Tokenize Text**: Input text and see how it is tokenized using GPT-4's tokenizer.
+-   **Tokenize Text**: Input text and see how it is tokenized using GPT's tokenizer.
 -   **Token Visualization**: View tokens, their IDs, and corresponding strings.
 -   **Vocabulary Explorer**: Browse the vocabulary and merge rules used by the tokenizer.
 -   **Modern UI**: Built with React, TypeScript, and a beautiful, responsive design.
@@ -20,7 +20,7 @@ A modern web application for experimenting with GPT-4 tokenization, built with N
 │   ├── app/                    # Next.js app directory
 │   ├── components/             # React components
 │   ├── lib/                    # Utility functions
-│   └── tokenizer/              # GPT-4 tokenizer implementation
+│   └── tokenizer/              # GPT tokenizer implementation
 ├── package.json                # Project dependencies and scripts
 ├── next.config.ts              # Next.js configuration
 ├── tsconfig.json               # TypeScript configuration

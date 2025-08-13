@@ -1,7 +1,7 @@
-import GPT4Tokenizer from '@/components/GPT4Tokenizer';
+import GPTTokenizer from '@/components/GPTTokenizer';
 
 export default function Home() {
   return (
-    <GPT4Tokenizer />
+    <GPTTokenizer />
   );
 }

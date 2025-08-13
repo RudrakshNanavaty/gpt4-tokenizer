@@ -18,12 +18,12 @@ import {
 	SelectValue
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { GPT4Tokenizer, TokenizerData } from '@/tokenizer/gpt4-tokenizer';
+import { GPTTokenizer, TokenizerData } from '@/tokenizer/gpt-tokenizer';
 import { CheckCircle, Laptop, Loader2, Moon, Sun, XCircle } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
 
-export default function GPT4TokenizerDemo() {
+export default function GPTTokenizerDemo() {
 	const { theme, setTheme } = useTheme();
 	const [systemText, setSystemText] = useState<string>(
 		'You are a helpful AI assistant. Please provide accurate and helpful responses to user questions.'
@@ -35,7 +35,7 @@ export default function GPT4TokenizerDemo() {
 	const [tokenIds, setTokenIds] = useState<number[]>([]);
 	const [decodedText, setDecodedText] = useState('');
 	const [isVerified, setIsVerified] = useState(false);
-	const [tokenizer, setTokenizer] = useState<GPT4Tokenizer | null>(null);
+	const [tokenizer, setTokenizer] = useState<GPTTokenizer | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 
@@ -61,7 +61,7 @@ export default function GPT4TokenizerDemo() {
 					.slice(1);
 
 				const tokenizerData: TokenizerData = { vocab, merges };
-				const newTokenizer = new GPT4Tokenizer(tokenizerData);
+				const newTokenizer = new GPTTokenizer(tokenizerData);
 
 				if (isMounted) {
 					setTokenizer(newTokenizer);
@@ -220,7 +220,7 @@ export default function GPT4TokenizerDemo() {
 			</div>
 			<div className='text-center animate-in slide-in-from-top-3 duration-500'>
 				<h1 className='text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent animate-in zoom-in-50 duration-700 hover:scale-105 transition-transform cursor-default'>
-					GPT-4 Tokenizer Demo
+					GPT Tokenizer Demo
 				</h1>
 				<p className='text-muted-foreground mt-3 animate-in slide-in-from-top-5 delay-200 duration-500 hover:scale-105 transition-all cursor-default'>
 					Test encoding and decoding with system and user messages
@@ -249,11 +249,13 @@ export default function GPT4TokenizerDemo() {
 							>
 								System Message
 							</Label>
-							<div className="mt-2">
+							<div className='mt-2'>
 								<Textarea
 									id='system-text'
 									value={systemText}
-									onChange={e => setSystemText(e.target.value)}
+									onChange={e =>
+										setSystemText(e.target.value)
+									}
 									placeholder='Enter system message...'
 									className='min-h-[90px] transition-all duration-300 focus:ring-2 focus:ring-blue-500 focus:scale-[1.02] hover:shadow-md'
 								/>
@@ -266,7 +268,7 @@ export default function GPT4TokenizerDemo() {
 							>
 								User Message
 							</Label>
-							<div className="mt-2">
+							<div className='mt-2'>
 								<Textarea
 									id='user-text'
 									value={userText}

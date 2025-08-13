@@ -6,8 +6,8 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-	title: 'GPT-4 Tokenizer',
-	description: 'TypeScript implementation of GPT-4 style BPE tokenization'
+	title: 'GPT Tokenizer',
+	description: 'TypeScript implementation of GPT style BPE tokenization'
 };
 
 export default function RootLayout({

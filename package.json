@@ -6,8 +6,7 @@
 		"dev": "next dev --turbopack",
 		"build": "next build",
 		"start": "next start",
-		"lint": "next lint",
-		"train-tokenizer": "tsx ./scripts/train-gpt4-tokenizer.ts"
+		"lint": "next lint"
 	},
 	"dependencies": {
 		"@radix-ui/react-label": "^2.1.7",
